@@ -4,6 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control y Registro de Ventas</title>
+    
+    <!-- Firebase SDKs -->
+    <script type="importmap">
+        {
+            "imports": {
+                "firebase/app": "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js",
+                "firebase/firestore": "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js",
+                "firebase/auth": "https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js"
+            }
+        }
+    </script>
+    
     <style>
         * {
             margin: 0;
@@ -238,6 +250,22 @@
         .btn-generar-plantilla:hover {
             background: #1565c0;
             transform: scale(1.05);
+        }
+        
+        .btn-sincronizar {
+            background: #004d40;
+            color: white;
+            padding: 12px 24px;
+            font-size: 16px;
+        }
+        
+        .btn-sincronizar:hover {
+            background: #00332a;
+            transform: scale(1.05);
+        }
+        
+        .btn-sincronizar.sincronizado {
+            background: #2e7d32;
         }
         
         .table-container {
@@ -738,9 +766,52 @@
             margin-bottom: 20px;
         }
         
+        .status-sincronizacion {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        
+        .status-sincronizacion.online {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #2e7d32;
+        }
+        
+        .status-sincronizacion.offline {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #c62828;
+        }
+        
+        .status-sincronizacion .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .status-sincronizacion .dot.online {
+            background: #2e7d32;
+        }
+        
+        .status-sincronizacion .dot.offline {
+            background: #c62828;
+        }
+        
         @media (max-width: 768px) {
             .resumen-financiero {
                 grid-template-columns: 1fr 1fr;
+            }
+            .header-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .header-actions h1 {
+                font-size: 24px;
             }
         }
     </style>
@@ -749,7 +820,14 @@
     <div class="container">
         <div class="header-actions">
             <h1>📊 Control y Registro de Ventas</h1>
-            <div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                <span id="statusSincronizacion" class="status-sincronizacion offline">
+                    <span class="dot offline"></span>
+                    <span id="statusTexto">Desconectado</span>
+                </span>
+                <button onclick="sincronizarConFirebase()" class="btn btn-sincronizar" id="btnSincronizar">
+                    ☁️ Sincronizar
+                </button>
                 <button onclick="abrirModalAgregarProducto()" class="btn btn-agregar-producto">➕ Nuevo Producto</button>
                 <button onclick="reiniciarConNombresCorrectos()" class="btn btn-reset">🔄 Corregir Nombres</button>
             </div>
@@ -1100,7 +1178,140 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        // ============ IMPORTAR FIREBASE ============
+        import { initializeApp } from 'firebase/app';
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            setDoc, 
+            getDoc, 
+            getDocs, 
+            updateDoc, 
+            deleteDoc,
+            query,
+            where,
+            onSnapshot
+        } from 'firebase/firestore';
+        
+        // ============ CONFIGURACIÓN DE FIREBASE ============
+        const firebaseConfig = {
+            apiKey: "AIzaSyD-iu_soYmiSOmolg7CI2BROYlrSGbMjHI",
+            authDomain: "sistema-de-ventas-jesus.firebaseapp.com",
+            projectId: "sistema-de-ventas-jesus",
+            storageBucket: "sistema-de-ventas-jesus.firebasestorage.app",
+            messagingSenderId: "1088456643573",
+            appId: "1:1088456643573:web:65e6991ae68208196306bc"
+        };
+        
+        // ============ INICIALIZAR FIREBASE ============
+        let app, db;
+        let sincronizado = false;
+        
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            console.log('✅ Firebase inicializado correctamente');
+            
+            // Actualizar estado de sincronización
+            document.getElementById('statusSincronizacion').className = 'status-sincronizacion online';
+            document.getElementById('statusSincronizacion').querySelector('.dot').className = 'dot online';
+            document.getElementById('statusTexto').textContent = 'Conectado a Firebase';
+            document.getElementById('btnSincronizar').textContent = '☁️ Sincronizado';
+            document.getElementById('btnSincronizar').className = 'btn btn-sincronizar sincronizado';
+            
+            sincronizado = true;
+            
+            // Escuchar cambios en tiempo real
+            escucharCambios();
+            
+        } catch (error) {
+            console.error('❌ Error al inicializar Firebase:', error);
+            document.getElementById('statusSincronizacion').className = 'status-sincronizacion offline';
+            document.getElementById('statusSincronizacion').querySelector('.dot').className = 'dot offline';
+            document.getElementById('statusTexto').textContent = 'Error de conexión';
+            sincronizado = false;
+        }
+        
+        // ============ FUNCIONES DE FIREBASE ============
+        
+        // Escuchar cambios en tiempo real
+        function escucharCambios() {
+            if (!db) return;
+            
+            // Escuchar cambios en productos
+            const productosRef = collection(db, 'productos');
+            onSnapshot(productosRef, (snapshot) => {
+                console.log('📦 Productos actualizados desde Firebase');
+                // No actualizar automáticamente para evitar loops
+            });
+            
+            // Escuchar cambios en ventas
+            const ventasRef = collection(db, 'ventas');
+            onSnapshot(ventasRef, (snapshot) => {
+                console.log('📊 Ventas actualizadas desde Firebase');
+            });
+            
+            // Escuchar cambios en inversiones
+            const inversionesRef = collection(db, 'inversiones');
+            onSnapshot(inversionesRef, (snapshot) => {
+                console.log('💰 Inversiones actualizadas desde Firebase');
+            });
+        }
+        
+        // Función para sincronizar datos con Firebase
+        window.sincronizarConFirebase = async function() {
+            if (!db) {
+                alert('❌ No hay conexión con Firebase. Revisa tu conexión a internet.');
+                return;
+            }
+            
+            const btn = document.getElementById('btnSincronizar');
+            btn.textContent = '⏳ Sincronizando...';
+            btn.disabled = true;
+            
+            try {
+                // Sincronizar productos
+                const productosRef = collection(db, 'productos');
+                for (const producto of productos) {
+                    const docRef = doc(productosRef, producto.id.toString());
+                    await setDoc(docRef, producto);
+                }
+                
+                // Sincronizar ventas
+                const ventasRef = collection(db, 'ventas');
+                for (const venta of ventas) {
+                    const docRef = doc(ventasRef, venta.id.toString());
+                    await setDoc(docRef, venta);
+                }
+                
+                // Sincronizar inversiones
+                const inversionesRef = collection(db, 'inversiones');
+                for (const inversion of inversiones) {
+                    const docRef = doc(inversionesRef, inversion.id.toString());
+                    await setDoc(docRef, inversion);
+                }
+                
+                alert('✅ Datos sincronizados con Firebase correctamente');
+                btn.textContent = '☁️ Sincronizado';
+                btn.className = 'btn btn-sincronizar sincronizado';
+                sincronizado = true;
+                
+                document.getElementById('statusSincronizacion').className = 'status-sincronizacion online';
+                document.getElementById('statusSincronizacion').querySelector('.dot').className = 'dot online';
+                document.getElementById('statusTexto').textContent = 'Conectado a Firebase';
+                
+            } catch (error) {
+                console.error('❌ Error al sincronizar:', error);
+                alert('❌ Error al sincronizar: ' + error.message);
+                btn.textContent = '☁️ Sincronizar';
+                btn.className = 'btn btn-sincronizar';
+            }
+            
+            btn.disabled = false;
+        };
+        
         // ============ CONFIGURACIÓN INICIAL ============
         const TASA_CAMBIO = 940;
         
@@ -1320,6 +1531,10 @@
             document.getElementById('montoInversion').value = '';
             
             alert(`✅ Inversión registrada: ${descripcion} - ${monto.toFixed(2)}$`);
+            
+            if (sincronizado) {
+                window.sincronizarConFirebase();
+            }
         }
         
         function eliminarInversion(id) {
@@ -1667,6 +1882,10 @@
             actualizarPrecio();
             
             alert('✅ Venta registrada exitosamente');
+            
+            if (sincronizado) {
+                window.sincronizarConFirebase();
+            }
         });
         
         function eliminarVenta(id) {
@@ -1693,6 +1912,10 @@
             actualizarTodo();
             
             alert(`✅ Venta eliminada correctamente\n\nProducto: ${ventaEliminar.productoNombre}\nCliente: ${ventaEliminar.cliente}\nTotal: ${ventaEliminar.total.toFixed(2)}$`);
+            
+            if (sincronizado) {
+                window.sincronizarConFirebase();
+            }
         }
         
         function editarVenta(id) {
@@ -1734,6 +1957,10 @@
             actualizarTodo();
             
             alert('✅ Venta actualizada correctamente');
+            
+            if (sincronizado) {
+                window.sincronizarConFirebase();
+            }
         }
         
         function marcarPagado(id) {
@@ -1744,6 +1971,10 @@
                 guardarDatos();
                 actualizarTodo();
                 alert('✅ Venta marcada como pagada');
+                
+                if (sincronizado) {
+                    window.sincronizarConFirebase();
+                }
             }
         }
         
@@ -1858,6 +2089,10 @@
             
             document.getElementById('cantidadReponer').value = '1';
             alert(`✅ Se agregaron ${cantidad} unidades de "${producto.nombre}" al inventario`);
+            
+            if (sincronizado) {
+                window.sincronizarConFirebase();
+            }
         }
         
         function actualizarSelectReponer() {
@@ -2196,6 +2431,10 @@
             
             cerrarModalAgregarProducto();
             alert(`✅ Producto "${nombre}" agregado correctamente`);
+            
+            if (sincronizado) {
+                window.sincronizarConFirebase();
+            }
         });
         
         // ============ FUNCIONES DE PESTAÑAS ============
@@ -2248,6 +2487,7 @@
         console.log('💰 Inversión total:', inversiones.reduce((sum, inv) => sum + inv.monto, 0).toFixed(2), '$');
         console.log('📦 Productos cargados:', productos.length);
         console.log('📊 Ventas registradas:', ventas.length);
+        console.log('☁️ Firebase:', sincronizado ? 'Conectado' : 'Desconectado');
     </script>
 </body>
 </html>
